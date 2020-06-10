@@ -7,6 +7,22 @@
 
 
 
+;define reports
+(define report-no-binding-found
+  (lambda (search-var)
+    (eopl:error 'apply-env "NO binding for ~s" search-var)))
+
+
+(define report-expval-extractor-error
+  (lambda (sym var)
+    (case (sym)
+      [('num) (eopl:error 'expval->num "~s is not a number" var)]
+      [('bool)(eopl:error 'expval->bool "~s is not a boolean" var)]
+      [('list)(eopl:error 'expval->list "~s is not a list" var)]
+      [('string)(eopl:error 'expval->string "~s is not a string" var)]
+      )))
+
+;define environment
 (define-datatype env env?
   (empty-env)
   (extend-env
@@ -14,8 +30,16 @@
    (val1 scheme-val?)
    (env1 env?)))
 
+(define apply-env
+  (lambda (environment search-var)
+    (cases env environment
+      (empty-env () (report-no-binding-found search-var))
+      (extend-env (var val saved-env) 
+                                       (if (eqv? search-var var) val (apply-env saved-env search-var)))))) ;we may add report-bad-env
+      
 
 
+;define grammer of the language and constructors
 (define-datatype command command?
   (a-unitcom
    (unitcom1 unitcom?))
@@ -34,13 +58,13 @@
    (return1 return?)))
 
 (define-datatype whilecom whilecom?
-  (while
+  (while-statement
    (exp1 exp?)
    (command1 command?)))
 
 
 (define-datatype ifcom ifcom?
-  (if
+  (if-statement
    (exp1 exp?)
    (command1 command?)
    (command command?)))
@@ -132,6 +156,51 @@
   (append-listmem
    (exp1 exp?)
    (listmem listmem?)))
+
+
+;define expression value sets
+(define-datatype expval expval?
+  (num-val
+   (num number?))
+  (bool-val
+   (bool boolean?))
+  (null-val
+   (null1 null?))
+  (list-val
+   (list1 list?))
+  (string-val
+   (string1 string?)))
+
+(define expval->num
+  (lambda (val)
+    (cases expval val
+      (num-val (num) num)
+      (else (report-expval-extractor-error 'num val)))))
+
+(define expval->bool
+  (lambda (val)
+    (cases expval val
+      (bool-val (bool) bool)
+      (else (report-expval-extractor-error 'bool val)))))
+
+(define expval->list
+  (lambda (val)
+    (cases expval val
+      (list-val (list1) list1)
+      (else (report-expval-extractor-error 'list val)))))
+
+(define expval->string
+  (lambda (val)
+    (cases expval val
+      (string-val (string1) string1)
+      (else (report-expval-extractor-error 'string val)))))
+
+
+
+
+;test
+;(define a (extend-env 'x 2 (empty-env)))
+;(apply-env a 'x)
 
 
 
