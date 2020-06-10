@@ -3,18 +3,6 @@
 
 (define true? (lambda (true1) (eqv? true1 #t)))
 (define posnum? (lambda (num1) (and (positive? num1) (number? num1))))
-(define (scheme-val? x) #t)
-
-
-
-(define-datatype env env?
-  (empty-env)
-  (extend-env
-   (var1 symbol?)
-   (val1 scheme-val?)
-   (env1 env?)))
-
-
 
 (define-datatype command command?
   (a-unitcom
@@ -37,7 +25,6 @@
   (while
    (exp1 exp?)
    (command1 command?)))
-
 
 (define-datatype ifcom ifcom?
   (if
