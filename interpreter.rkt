@@ -4,6 +4,15 @@
 (define true? (lambda (true1) (eqv? true1 #t)))
 (define posnum? (lambda (num1) (and (positive? num1) (number? num1))))
 (define (scheme-val? x) #t)
+(define list-operator ( lambda (operator list1 num1)
+                            (if (null? list1) '() (cons (operator (car list1) num1) (list-operator operator (cdr list1) num1)))))
+(define list-operator2 ( lambda (operator list1 num1)
+                            (if (null? list1) '() (cons (operator num1 (car list1)) (list-operator operator (cdr list1) num1)))))
+(define neg-list (lambda (list1)
+                   (if (null? list1) '() (cons (* -1 (car list1)) (neg-list (cdr list1))))))
+(define inverse-list (lambda (list1)
+                   (if (null? list1) '() (cons (/ 1 (car list1)) (inverse-list (cdr list1))))))
+
 
 (define (while condition body)
   (when (condition)
@@ -32,7 +41,7 @@
   (empty-env)
   (extend-env
    (var1 symbol?)
-   (val1 scheme-val?)
+   (val1 expval?)
    (env1 env?)))
 
 (define apply-env
@@ -42,7 +51,7 @@
       (extend-env (var val saved-env) 
                                        (if (eqv? search-var var) val (apply-env saved-env search-var)))))) ;we may add report-bad-env
       
-
+(define environment (empty-env))
 
 ;define grammer of the language and constructors
 (define-datatype command command?
@@ -200,25 +209,31 @@
       (string-val (string1) string1)
       (else (report-expval-extractor-error 'string val)))))
 
+(define expval->null
+  (lambda (val)
+    (cases expval val
+      (null-val (null1) null1)
+      (else (report-expval-extractor-error 'null val)))))
+
 
 
 
 ;value-of
-(define 
+
 (define value-of-command
-  (lambda (command1 environment)
+  (lambda (command1)
     (cases command command1
-      (a-unitcom (unitcom1) (value-of-unitcom unitcom1 environment))
-      (unitcoms (command2 unitcom1) (value-of-unitcom unitcom1 (value-of-command command2 environment)));(begin (value-of-command command2 environment) (value-of-unitcom unitcom1 environment)))
+      (a-unitcom (unitcom1) (value-of-unitcom unitcom1))
+      (unitcoms (command2 unitcom1) (begin (value-of-command command2 ) (value-of-unitcom unitcom1 )))
       )))
 
 (define value-of-unitcom
-  (lambda (unitcom1 environment)
+  (lambda (unitcom1)
     (cases unitcom unitcom1
-      (while-com (while1) (value-of-whilecom while1 environment))
-      (if-com (if1) (value-of-ifcom if1 environment))
-      (assign-com (assign1) (value-of-assign assign1 environment))
-      (return-com (return1) (value-of-return return1 environment)))))
+      (while-com (while1) (value-of-whilecom while1))
+      (if-com (if1) (value-of-ifcom if1))
+      (assign-com (assign1) (value-of-assign assign1))
+      (return-com (return1) (value-of-return return1)))))
 
 ;(define value-of-whilecom
  ; (lambda (whilecom1 environment)
@@ -226,52 +241,227 @@
    ;   (while-statement (exp1 command1) (when (value-of-exp exp1 environment) (value-of-command command1 environment) (value-of-whilecom
 
 (define value-of-ifcom
-  (lambda (ifcom1 environment)
+  (lambda (ifcom1)
     (cases ifcom ifcom1
-      (if-statement (exp1 command1 command2) (if (expval->bool (value-of-exp exp1 environment)) (value-of-command command1 environment) (value-of-command command2 environment))))))
+      (if-statement (exp1 command1 command2) (if (expval->bool (value-of-exp exp1)) (value-of-command command1) (value-of-command command2))))))
 
 (define value-of-assign
-  (lambda (assign1 environment)
+  (lambda (assign1)
     (cases assign assign1
-      (assignment (var1 exp1) (extend-env var1 (value-of-exp exp1 environment) environment)))))
+      (assignment (var1 exp1) (extend-env var1 (value-of-exp exp1))))))
 
 
 (define value-of-return
-  (lambda (return1 environment)
+  (lambda (return1)
     (cases return return1
-      (returnment (exp1) (begin (print (value-of-exp exp1 environment)) (exit))))))
+      (returnment (exp1) (begin (print (value-of-exp exp1)) (exit))))))
 
 
 (define value-of-exp
-  (lambda (exp1 environment)
+  (lambda (exp1)
     (cases exp exp1
-      (a-exp (aexp1) (value-of-aexp aexp1 environment))
-      (more-exp (aexp1 aexp2) (let ( (val1 (value-of-aexp aexp1 environment)) (val2 (value-of-aexp aexp2 environment)) )
+      (a-exp (aexp1) (value-of-aexp aexp1))
+      (more-exp (aexp1 aexp2) (let ( (val1 (value-of-aexp aexp1)) (val2 (value-of-aexp aexp2)) )
                                 (cases expval val1
                                   (num-val (num1) (cases expval val2
                                                     (num-val (num2) (bool-val(> (expval->num num1) (expval->num num2))))
-                                                    (list-val (list1) (bool-val (
-      (less-exp (aexp1 aexp2) (< (value-of-aexp aexp1 environment) (value-of-aexp aexp2 environment)))
-      (eq-exp (aexp1 aexp2) (= (value-of-aexp aexp1 environment) (value-of-aexp aexp2 environment)))
-      (neq-exp (aexp1 aexp2) (not (= (value-of-aexp aexp1 environment) (value-of-aexp aexp2 environment))))
+                                                    (list-val (list1) (list-val (list-operator <= (expval->list list1) (expval->num num1))))
+                                                    (else report-invalid-comparison)
+                                                    ))
+                                  (list-val (list1) (cases expval val2
+                                                      (num-val (num1) (list-val (list-operator > (expval->list list1) (expval->num num1))))
+                                                      (string-val (string1) (list-val (list-operator string>? (expval->list list1) (expval->string string1))))
+                                                      (else report-invalid-comparison)))
+                                  (string-val (string1) (cases expval val2
+                                                          (list-val (list1) (list-val (list-operator string<=? (expval->list list1) (expval->string string1))))
+                                                          (string-val (string2) (list-val (map string>? (expval->string string1) (expval->string string2))))
+                                                          (else report-invalid-comparison)))
+                                  )))
+      (less-exp (aexp1 aexp2) (let ( (val1 (value-of-aexp aexp1)) (val2 (value-of-aexp aexp2)) )
+                                (cases expval val1
+                                  (num-val (num1) (cases expval val2
+                                                    (num-val (num2) (bool-val(< (expval->num num1) (expval->num num2))))
+                                                    (list-val (list1) (list-val (list-operator >= (expval->list list1) (expval->num num1))))
+                                                    (else report-invalid-comparison)
+                                                    ))
+                                  (list-val (list1) (cases expval val2
+                                                      (num-val (num1) (list-val (list-operator < (expval->list list1) (expval->num num1))))
+                                                      (string-val (string1) (list-val (list-operator string<? (expval->list list1) (expval->string string1))))
+                                                      (else report-invalid-comparison)))
+                                  (string-val (string1) (cases expval val2
+                                                          (list-val (list1) (list-val (list-operator string>=? (expval->list list1) (expval->string string1))))
+                                                          (string-val (string2) (bool-val (string<? (expval->string string1) (expval->string string2))))
+                                                          (else report-invalid-comparison)))
+
+                               )))
+      (eq-exp (aexp1 aexp2) (let ( (val1 (value-of-aexp aexp1)) (val2 (value-of-aexp aexp2)) )
+                                (cases expval val1
+                                  (num-val (num1) (cases expval val2
+                                                    (num-val (num2) (bool-val(= (expval->num num1) (expval->num num2))))
+                                                    (list-val (list1) (list-val (list-operator = (expval->list list1) (expval->num num1))))
+                                                    (else report-invalid-comparison)
+                                                    ))
+                                  (list-val (list1) (cases expval val2
+                                                      (num-val (num1) (list-val (list-operator = (expval->list list1) (expval->num num1))))
+                                                      (string-val (string1) (list-val (list-operator string=? (expval->list list1) (expval->string string1))))
+                                                      (bool-val (bool1)(list-val (list-operator eqv? (expval->list list1) (expval->bool bool1))))
+                                                      (null-val (null1)(list-val (list-operator eqv? (expval->list list1) (expval->null null1))))
+                                                      (list-val (list2) (list-val (map eqv? (expval->list list1) (expval->list list2)))) 
+                                                      ))
+                                  (string-val (string1) (cases expval val2
+                                                          (list-val (list1) (list-val (list-operator string=? (expval->list list1) (expval->string string1))))
+                                                          (string-val (string2) (bool-val (string=? (expval->string string1) (expval->string string2))))
+                                                          (else report-invalid-comparison)))
+                                  (bool-val (bool1) (cases expval val2
+                                                      (list-val (list1) (list-val (list-operator eqv? (expval->list list1) (expval->bool bool1))))
+                                                      (bool-val (bool2) (bool-val (eqv? (expval->bool bool1) (expval->bool bool2))))
+                                                      (else report-invalid-comparison)))
+                                  (null-val (null1) (cases expval val2
+                                                      (null-val (null2) (bool-val #t))
+                                                      (list-val (list1) (list-val (list-operator eqv? (expval->list list1) (expval->null null1))))
+                                                      (else report-invalid-comparison)))
+                                  )))
+      (neq-exp (aexp1 aexp2)   (let ( (val1 (value-of-aexp aexp1)) (val2 (value-of-aexp aexp2)) )
+                                (cases expval val1
+                                  (num-val (num1) (cases expval val2
+                                                    (num-val (num2) (bool-val(not (= (expval->num num1) (expval->num num2)))))
+                                                    (list-val (list1) (list-val (map not (list-operator = (expval->list list1) (expval->num num1)))))
+                                                    (else report-invalid-comparison)
+                                                    ))
+                                  (list-val (list1) (cases expval val2
+                                                      (num-val (num1) (list-val (map not (list-operator = (expval->list list1) (expval->num num1)))))
+                                                      (string-val (string1) (list-val (map not (list-operator string=? (expval->list list1) (expval->string string1)))))
+                                                      (bool-val (bool1)(list-val (map not (list-operator eqv? (expval->list list1) (expval->bool bool1)))))
+                                                      (null-val (null1)(list-val (map not (list-operator eqv? (expval->list list1) (expval->null null1)))))
+                                                      (list-val (list2) (list-val (map not (map eqv? (expval->list list1) (expval->list list2)))))
+                                                      ))
+                                  (string-val (string1) (cases expval val2
+                                                          (list-val (list1) (list-val (map not (list-operator string=? (expval->list list1) (expval->string string1)))))
+                                                          (string-val (string2) (bool-val (not (string=? (expval->string string1) (expval->string string2)))))
+                                                          (else report-invalid-comparison)))
+                                  (bool-val (bool1) (cases expval val2
+                                                      (list-val (list1) (list-val (map not (list-operator eqv? (expval->list list1) (expval->bool bool1)))))
+                                                      (bool-val (bool2) (bool-val (not (eqv? (expval->bool bool1) (expval->bool bool2)))))
+                                                      (else report-invalid-comparison)))
+                                  (null-val (null1) (cases expval val2
+                                                      (null-val (null2) (bool-val #f))
+                                                      (list-val (list1) (list-val (map not (list-operator eqv? (expval->list list1) (expval->null null1)))))
+                                                      (else report-invalid-comparison)))
+                                  )))
       )))
 
 (define value-of-aexp
-  (lambda (aexp1 environment)
+  (lambda (aexp1)
     (cases aexp aexp1
-      (b-aexp (bexp1) (value-of-bexp bexp1 environment))
-      (diff-aexp (bexp1 aexp1) (- (value-of-bexp bexp1 environment) (value-of-aexp aexp1 environment)))
-      (sum-aexp (bexp1 aexp1) (+ (value-of-bexp bexp1 environment) (value-of-aexp aexp1 environment)))
+      (b-aexp (bexp1) (value-of-bexp bexp1))
+      (diff-aexp (bexp1 aexp1) (let( (val1 (value-of-bexp bexp1)) (val2 (value-of-aexp aexp1)) )
+                                 (cases expval val1
+                                   (num-val (num1) (cases expval val2
+                                                     (num-val (num2) (num-val (- (expval->num num1) (expval->num num2))))
+                                                     (list-val (list1) (list-val (neg-list (list-operator - (expval->list list1) (expval->num num1)))))
+                                                     (else report-invalid-operands)))
+                                   (list-val (list1) (cases expval val2
+                                                       (num-val (num1) (list-val (list-operator - (expval->list list1) (expval->num num1))))
+                                                       (else report-invalid-operands)))
+                                   )))
+      (sum-aexp (bexp1 aexp1) (let( (val1 (value-of-bexp bexp1)) (val2 (value-of-aexp aexp1))  )
+                                (cases expval val1
+                                  (num-val (num1) (cases expval val2
+                                                    (num-val (num2) (num-val (+ (expval->num num1) (expval->num num2))))
+                                                    (list-val (list1) (list-val (list-operator + (expval->list list1) (expval->num num1))))
+                                                    (else report-invalid-operands)))
+                                  (list-val (list1) (cases expval val2
+                                                      (num-val (num1) (list-val (list-operator + (expval->list list1) (expval->num num1))))
+                                                      (list-val (list2) (list-val (append (expval->list list1) (expval->list list2))))
+                                                      (bool-val (bool1) (list-val (list-operator or (expval->list list1) (expval->bool bool1))))
+                                                      (string-val (string1) (list-val (list-operator string-append (expval->list list1) (expval->string string1))))
+                                                      (else report-invalid-operands)))
+                                  (bool-val (bool1) (cases expval val2
+                                                      (bool-val (bool2) (bool-val (or (expval->bool bool1) (expval->bool bool2))))
+                                                      (list-val (list1) (list-val (list-operator or (expval->list list1) (expval->bool bool1))))
+                                                      (else report-invalid-operands)))
+                                  (string-val (string1) (cases expval val2
+                                                          (string-val (string2) (string-val (string-append (expval->string string1) (expval->string string2))))
+                                                          (list-val (list1) (list-val (list-operator string-append (expval->list list1) (expval->string string1))))
+                                                          (else report-invalid-operands)))
+                                  )))
       )))
 
 (define value-of-bexp
-  (lambda (bexp1 environment)
+  (lambda (bexp1)
     (cases bexp bexp1
-      (c-bexp (cexp1) (value-of-cexp cexp1 environment))
-      (mul-bexp (cexp1 bexp1) (* (value-of-cexp cexp1 environment) (value-of-bexp bexp1 environment)))
-      (div-bexp (cexp1 bexp1) (/ (value-of-cexp cexp1 environment) (value-of-bexp bexp1 environment)))
+      (c-bexp (cexp1) (value-of-cexp cexp1))
+      (mul-bexp (cexp1 bexp1) (let( (val1 (value-of-cexp cexp1)) (val2 (value-of-bexp bexp1))  )
+                                (cases expval val1
+                                  (num-val (num1) (cases expval val2
+                                                    (num-val (num2) (num-val (* (expval->num num1) (expval->num num2))))
+                                                    (list-val (list1) (list-val (list-operator * (expval->list list1) (expval->num num1))))
+                                                    (else report-invalid-operands)))
+                                  (list-val (list1) (cases expval val2
+                                                      (num-val (num1) (list-val (list-operator * (expval->list list1) (expval->num num1))))
+                                                      (bool-val (bool1) (list-val (list-operator and (expval->list list1) (expval->bool bool1))))
+                                                      (else report-invalid-operands)))
+                                  (bool-val (bool1) (cases expval val2
+                                                      (bool-val (bool2) (bool-val (and (expval->bool bool1) (expval->bool bool2))))
+                                                      (list-val (list1) (list-val (list-operator and (expval->list list1) (expval->bool bool1))))
+                                                      (else report-invalid-operands)))
+                                  (else report-invalid-operands)
+                                  )))
+
+      (div-bexp (cexp1 bexp1) (let( (val1 (value-of-cexp cexp1)) (val2 (value-of-bexp bexp1)) )
+                                 (cases expval val1
+                                   (num-val (num1) (cases expval val2
+                                                     (num-val (num2) (num-val (/ (expval->num num1) (expval->num num2))))
+                                                     (list-val (list1) (list-val (inverse-list (list-operator / (expval->list list1) (expval->num num1)))))
+                                                     (else report-invalid-operands)))
+                                   (list-val (list1) (cases expval val2
+                                                       (num-val (num1) (list-val (list-operator / (expval->list list1) (expval->num num1))))
+                                                       (else report-invalid-operands)))
+                                   (else report-invalid-operands)
+                                   )))
+                
       )))
 
+(define value-of-cexp
+  (lambda (cexp1)
+    (cases cexp cexp1
+      (neg-cexp (nexp1) (let ( (val1 value-of-cexp) )
+                          (cases expval val1
+                            (num-val (num1) (num-val (* -1 (expval->num val1))))
+                            (bool-val (bool1) (bool-val (not (expval->bool bool1))))
+                            (list-val (list1) (list-val (list-operator * (expval->list list1) -1)))
+                            (else report-invalid-operators)
+                            )))
+      (par-cexp (exp1) (value-of-exp exp1))
+      (num-cexp (num1) (num-val num1))
+      (null-cexp (null1) (null-val null1))
+      (var-cexp (var1) (apply-env environment var))
+      (true-cexp (true1) (bool-val #t))
+      (false-cexp (false1) (bool-val #f))
+      (string-cexp (string1) (string-val string1))
+      (list-cexp (list1) (value-of-newlist list1))
+      (listmem-cexp (var1 listmem1) ())
+      )))
+
+(define value-of-newlist
+  (lambda (newlist1)
+    (cases newlist newlist1
+      (empty-newlist () (list-val '()))
+      (list-newlist (listvalues1) (list-val (value-of-listvalues)))
+      )))
+
+(define value-of-listvalues
+  (lambda (listvalues1)
+    (cases listvalues listvalues1
+      (exp-listvalues (exp1) (list (value-of-exp exp1)))
+      (append-listvalues (exp1 listvalues2) (cons (value-of-exp exp1) (value-of-listvalues listvalues2)))
+      )))
+
+
+(define value-of-listmem
+  (lambda (listmem1)
+    (cases listmem listmem1
+      (exp-listmem (exp1) (
 
       
       
