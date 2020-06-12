@@ -5,6 +5,11 @@
 (define posnum? (lambda (num1) (and (positive? num1) (number? num1))))
 (define (scheme-val? x) #t)
 
+(define (while condition body)
+  (when (condition)
+    (body)
+    (while condition body)))
+
 
 
 ;define reports
@@ -67,7 +72,7 @@
   (if-statement
    (exp1 exp?)
    (command1 command?)
-   (command command?)))
+   (command2 command?)))
 
 (define-datatype assign assign?
   (assignment
@@ -197,6 +202,79 @@
 
 
 
+
+;value-of
+(define 
+(define value-of-command
+  (lambda (command1 environment)
+    (cases command command1
+      (a-unitcom (unitcom1) (value-of-unitcom unitcom1 environment))
+      (unitcoms (command2 unitcom1) (value-of-unitcom unitcom1 (value-of-command command2 environment)));(begin (value-of-command command2 environment) (value-of-unitcom unitcom1 environment)))
+      )))
+
+(define value-of-unitcom
+  (lambda (unitcom1 environment)
+    (cases unitcom unitcom1
+      (while-com (while1) (value-of-whilecom while1 environment))
+      (if-com (if1) (value-of-ifcom if1 environment))
+      (assign-com (assign1) (value-of-assign assign1 environment))
+      (return-com (return1) (value-of-return return1 environment)))))
+
+;(define value-of-whilecom
+ ; (lambda (whilecom1 environment)
+  ;  (cases whilecom whilecom1
+   ;   (while-statement (exp1 command1) (when (value-of-exp exp1 environment) (value-of-command command1 environment) (value-of-whilecom
+
+(define value-of-ifcom
+  (lambda (ifcom1 environment)
+    (cases ifcom ifcom1
+      (if-statement (exp1 command1 command2) (if (expval->bool (value-of-exp exp1 environment)) (value-of-command command1 environment) (value-of-command command2 environment))))))
+
+(define value-of-assign
+  (lambda (assign1 environment)
+    (cases assign assign1
+      (assignment (var1 exp1) (extend-env var1 (value-of-exp exp1 environment) environment)))))
+
+
+(define value-of-return
+  (lambda (return1 environment)
+    (cases return return1
+      (returnment (exp1) (begin (print (value-of-exp exp1 environment)) (exit))))))
+
+
+(define value-of-exp
+  (lambda (exp1 environment)
+    (cases exp exp1
+      (a-exp (aexp1) (value-of-aexp aexp1 environment))
+      (more-exp (aexp1 aexp2) (let ( (val1 (value-of-aexp aexp1 environment)) (val2 (value-of-aexp aexp2 environment)) )
+                                (cases expval val1
+                                  (num-val (num1) (cases expval val2
+                                                    (num-val (num2) (bool-val(> (expval->num num1) (expval->num num2))))
+                                                    (list-val (list1) (bool-val (
+      (less-exp (aexp1 aexp2) (< (value-of-aexp aexp1 environment) (value-of-aexp aexp2 environment)))
+      (eq-exp (aexp1 aexp2) (= (value-of-aexp aexp1 environment) (value-of-aexp aexp2 environment)))
+      (neq-exp (aexp1 aexp2) (not (= (value-of-aexp aexp1 environment) (value-of-aexp aexp2 environment))))
+      )))
+
+(define value-of-aexp
+  (lambda (aexp1 environment)
+    (cases aexp aexp1
+      (b-aexp (bexp1) (value-of-bexp bexp1 environment))
+      (diff-aexp (bexp1 aexp1) (- (value-of-bexp bexp1 environment) (value-of-aexp aexp1 environment)))
+      (sum-aexp (bexp1 aexp1) (+ (value-of-bexp bexp1 environment) (value-of-aexp aexp1 environment)))
+      )))
+
+(define value-of-bexp
+  (lambda (bexp1 environment)
+    (cases bexp bexp1
+      (c-bexp (cexp1) (value-of-cexp cexp1 environment))
+      (mul-bexp (cexp1 bexp1) (* (value-of-cexp cexp1 environment) (value-of-bexp bexp1 environment)))
+      (div-bexp (cexp1 bexp1) (/ (value-of-cexp cexp1 environment) (value-of-bexp bexp1 environment)))
+      )))
+
+
+      
+      
 
 ;test
 ;(define a (extend-env 'x 2 (empty-env)))
