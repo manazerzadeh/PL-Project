@@ -8,6 +8,10 @@
                             (if (null? list1) '() (cons (operator (car list1) num1) (list-operator operator (cdr list1) num1)))))
 (define list-operator2 ( lambda (operator list1 num1)
                             (if (null? list1) '() (cons (operator num1 (car list1)) (list-operator operator (cdr list1) num1)))))
+(define list-or ( lambda (list1 num1)
+                            (if (null? list1) '() (cons (or (car list1) num1) (list-or (cdr list1) num1)))))
+(define list-and ( lambda (list1 num1)
+                            (if (null? list1) '() (cons (and (car list1) num1) (list-and (cdr list1) num1)))))
 (define neg-list (lambda (list1)
                    (if (null? list1) '() (cons (* -1 (car list1)) (neg-list (cdr list1))))))
 (define inverse-list (lambda (list1)
@@ -19,6 +23,8 @@
     (body)
     (while condition body)))
 
+(define listmem-extractor (lambda (list1 listmem1)
+                            ( if (= 1 (length listmem1)) (list-ref list1 (car listmem1)) (listmem-extractor (list-ref list1 (car listmem1)) (cdr listmem1)))))
 
 
 ;define reports
@@ -35,6 +41,14 @@
       [('list)(eopl:error 'expval->list "~s is not a list" var)]
       [('string)(eopl:error 'expval->string "~s is not a string" var)]
       )))
+
+(define report-invalid-comparison
+  (lambda ()
+    (eopl:error "invalid comparison")))
+
+(define report-invalid-operands
+  (lambda ()
+    (eopl:error "invalid operands")))
 
 ;define environment
 (define-datatype env env?
@@ -169,7 +183,7 @@
    (exp1 exp?))
   (append-listmem
    (exp1 exp?)
-   (listmem listmem?)))
+   (listmem1 listmem?)))
 
 
 ;define expression value sets
@@ -235,10 +249,11 @@
       (assign-com (assign1) (value-of-assign assign1))
       (return-com (return1) (value-of-return return1)))))
 
-;(define value-of-whilecom
- ; (lambda (whilecom1 environment)
-  ;  (cases whilecom whilecom1
-   ;   (while-statement (exp1 command1) (when (value-of-exp exp1 environment) (value-of-command command1 environment) (value-of-whilecom
+(define value-of-whilecom
+  (lambda (whilecom1)
+    (cases whilecom whilecom1
+      (while-statement (exp1 command1) (when (expval->bool (value-of-exp exp1)) (value-of-command command1) (value-of-whilecom (while-statement exp1 command1))))
+      )))
 
 (define value-of-ifcom
   (lambda (ifcom1)
@@ -276,6 +291,7 @@
                                                           (list-val (list1) (list-val (list-operator string<=? (expval->list list1) (expval->string string1))))
                                                           (string-val (string2) (list-val (map string>? (expval->string string1) (expval->string string2))))
                                                           (else report-invalid-comparison)))
+                                  (else report-invalid-comparison)
                                   )))
       (less-exp (aexp1 aexp2) (let ( (val1 (value-of-aexp aexp1)) (val2 (value-of-aexp aexp2)) )
                                 (cases expval val1
@@ -292,6 +308,7 @@
                                                           (list-val (list1) (list-val (list-operator string>=? (expval->list list1) (expval->string string1))))
                                                           (string-val (string2) (bool-val (string<? (expval->string string1) (expval->string string2))))
                                                           (else report-invalid-comparison)))
+                                  (else report-invalid-comparison)
 
                                )))
       (eq-exp (aexp1 aexp2) (let ( (val1 (value-of-aexp aexp1)) (val2 (value-of-aexp aexp2)) )
@@ -363,6 +380,7 @@
                                    (list-val (list1) (cases expval val2
                                                        (num-val (num1) (list-val (list-operator - (expval->list list1) (expval->num num1))))
                                                        (else report-invalid-operands)))
+                                   (else report-invalid-operands)
                                    )))
       (sum-aexp (bexp1 aexp1) (let( (val1 (value-of-bexp bexp1)) (val2 (value-of-aexp aexp1))  )
                                 (cases expval val1
@@ -373,17 +391,18 @@
                                   (list-val (list1) (cases expval val2
                                                       (num-val (num1) (list-val (list-operator + (expval->list list1) (expval->num num1))))
                                                       (list-val (list2) (list-val (append (expval->list list1) (expval->list list2))))
-                                                      (bool-val (bool1) (list-val (list-operator or (expval->list list1) (expval->bool bool1))))
+                                                      (bool-val (bool1) (list-val (list-or (expval->list list1) (expval->bool bool1))))
                                                       (string-val (string1) (list-val (list-operator string-append (expval->list list1) (expval->string string1))))
                                                       (else report-invalid-operands)))
                                   (bool-val (bool1) (cases expval val2
                                                       (bool-val (bool2) (bool-val (or (expval->bool bool1) (expval->bool bool2))))
-                                                      (list-val (list1) (list-val (list-operator or (expval->list list1) (expval->bool bool1))))
+                                                      (list-val (list1) (list-val (list-or (expval->list list1) (expval->bool bool1))))
                                                       (else report-invalid-operands)))
                                   (string-val (string1) (cases expval val2
                                                           (string-val (string2) (string-val (string-append (expval->string string1) (expval->string string2))))
                                                           (list-val (list1) (list-val (list-operator string-append (expval->list list1) (expval->string string1))))
                                                           (else report-invalid-operands)))
+                                  (else report-invalid-operands)
                                   )))
       )))
 
@@ -399,11 +418,11 @@
                                                     (else report-invalid-operands)))
                                   (list-val (list1) (cases expval val2
                                                       (num-val (num1) (list-val (list-operator * (expval->list list1) (expval->num num1))))
-                                                      (bool-val (bool1) (list-val (list-operator and (expval->list list1) (expval->bool bool1))))
+                                                      (bool-val (bool1) (list-val (list-and (expval->list list1) (expval->bool bool1))))
                                                       (else report-invalid-operands)))
                                   (bool-val (bool1) (cases expval val2
                                                       (bool-val (bool2) (bool-val (and (expval->bool bool1) (expval->bool bool2))))
-                                                      (list-val (list1) (list-val (list-operator and (expval->list list1) (expval->bool bool1))))
+                                                      (list-val (list1) (list-val (list-and (expval->list list1) (expval->bool bool1))))
                                                       (else report-invalid-operands)))
                                   (else report-invalid-operands)
                                   )))
@@ -430,38 +449,41 @@
                             (num-val (num1) (num-val (* -1 (expval->num val1))))
                             (bool-val (bool1) (bool-val (not (expval->bool bool1))))
                             (list-val (list1) (list-val (list-operator * (expval->list list1) -1)))
-                            (else report-invalid-operators)
+                            (else report-invalid-operands)
                             )))
       (par-cexp (exp1) (value-of-exp exp1))
       (num-cexp (num1) (num-val num1))
       (null-cexp (null1) (null-val null1))
-      (var-cexp (var1) (apply-env environment var))
+      (var-cexp (var1) (apply-env environment var1))
       (true-cexp (true1) (bool-val #t))
       (false-cexp (false1) (bool-val #f))
       (string-cexp (string1) (string-val string1))
       (list-cexp (list1) (value-of-newlist list1))
-      (listmem-cexp (var1 listmem1) ())
+      (listmem-cexp (var1 listmem1) (listmem-extractor (expval->list(apply-env environment var1)) (expval->list (value-of-listmem listmem1))))
       )))
 
 (define value-of-newlist
   (lambda (newlist1)
     (cases newlist newlist1
       (empty-newlist () (list-val '()))
-      (list-newlist (listvalues1) (list-val (value-of-listvalues)))
+      (list-newlist (listvalues1) (value-of-listvalues))
       )))
 
 (define value-of-listvalues
   (lambda (listvalues1)
     (cases listvalues listvalues1
       (exp-listvalues (exp1) (list (value-of-exp exp1)))
-      (append-listvalues (exp1 listvalues2) (cons (value-of-exp exp1) (value-of-listvalues listvalues2)))
+      (append-listvalues (exp1 listvalues2) (list-val (cons (value-of-exp exp1) (expval->list (value-of-listvalues listvalues2))))) ;fix value-of-exp exp1
       )))
 
 
 (define value-of-listmem
   (lambda (listmem1)
     (cases listmem listmem1
-      (exp-listmem (exp1) (
+      (exp-listmem (exp1) (list-val (list (expval->num (value-of-exp exp1)))))
+      (append-listmem (exp1 listmem1) (list-val (cons (expval->num (value-of-exp exp1)) (expval->list (value-of-listmem listmem1)))))
+      )))
+
 
       
       
