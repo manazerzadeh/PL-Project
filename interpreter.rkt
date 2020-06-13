@@ -1,6 +1,8 @@
 #lang racket
 (require (lib "eopl.ss" "eopl"))
 
+
+;util functions
 (define true? (lambda (true1) (eqv? true1 #t)))
 (define posnum? (lambda (num1) (and (positive? num1) (number? num1))))
 (define (scheme-val? x) #t)
@@ -18,10 +20,7 @@
                    (if (null? list1) '() (cons (/ 1 (car list1)) (inverse-list (cdr list1))))))
 
 
-(define (while condition body)
-  (when (condition)
-    (body)
-    (while condition body)))
+
 
 (define listmem-extractor (lambda (list1 listmem1)
                             ( if (= 1 (length listmem1)) (list-ref list1 (car listmem1)) (listmem-extractor (list-ref list1 (car listmem1)) (cdr listmem1)))))
@@ -472,7 +471,7 @@
 (define value-of-listvalues
   (lambda (listvalues1)
     (cases listvalues listvalues1
-      (exp-listvalues (exp1) (list (value-of-exp exp1)))
+      (exp-listvalues (exp1) (list-val(list (value-of-exp exp1))))
       (append-listvalues (exp1 listvalues2) (list-val (cons (value-of-exp exp1) (expval->list (value-of-listvalues listvalues2))))) ;fix value-of-exp exp1
       )))
 
@@ -486,14 +485,7 @@
 
 
       
-      
 
 ;test
-;(define a (extend-env 'x 2 (empty-env)))
-;(apply-env a 'x)
-
-
-
-
 
 
