@@ -1,10 +1,16 @@
 #lang racket
 (require (lib "eopl.ss" "eopl"))
+(require parser-tools/lex
+         (prefix-in : parser-tools/lex-sre)
+         parser-tools/yacc)
+
+
+
 
 
 ;util functions
 (define true? (lambda (true1) (eqv? true1 #t)))
-(define posnum? (lambda (num1) (and (positive? num1) (number? num1))))
+(define posnum? (lambda (num1) (or (and (positive? num1) (number? num1)) (zero? num1))))
 (define (scheme-val? x) #t)
 (define list-operator ( lambda (operator list1 num1)
                             (if (null? list1) '() (cons (operator (car list1) num1) (list-operator operator (cdr list1) num1)))))
@@ -29,7 +35,12 @@
 ;define reports
 (define report-no-binding-found
   (lambda (search-var)
-    (eopl:error 'apply-env "NO binding for ~s" search-var)))
+    (begin
+      (print environment)
+      (print search-var)
+      (eopl:error 'apply-env "NO binding for ~s" search-var)
+
+    )))
 
 
 (define report-expval-extractor-error
@@ -231,6 +242,136 @@
 
 
 
+; lexer
+
+
+
+(define our-lexer
+    (lexer
+        ("=" (token-assign))
+        ("return" (token-return))
+        ("endif" (token-endif))
+        ("else" (token-else))
+        ("then" (token-then))
+        ("end" (token-end))
+        ("while" (token-while))
+        ("do" (token-do))
+        ("if" (token-if))
+        ("==" (token-eq))
+        ("!=" (token-ne))
+        (">" (token-gt))
+        ("<" (token-lt))
+        ("-" (token-minus))
+        ("+" (token-plus))
+        ("*" (token-mul))
+        ("/" (token-div))
+        ("null" (token-null))
+        ("true" (token-true))
+        ("false" (token-false))
+        (#\( (token-pb))
+        (#\) (token-pe))
+        (#\[ (token-bb))
+        (#\] (token-be))
+        (#\, (token-colon))
+        (#\; (token-semicolon))
+        ((:: #\" (complement(::  any-string #\" any-string )) #\") (token-string (substring lexeme 1 (- (string-length lexeme) 1))))
+        ((:: (:+ (char-range #\0 #\9)) (:? (:: #\. (:+ (char-range #\0 #\9))))) (token-pos-number (string->number lexeme)))
+        ((:+ (union (char-range #\a #\z) (char-range #\A #\Z))) (token-id (string->symbol lexeme)))
+        (whitespace (our-lexer input-port))
+        (#\0 (token-eof))
+    )
+)
+
+(define (lex-this input) (lambda () (our-lexer input)))
+
+
+
+(define-tokens t (pos-number id string))
+(define-empty-tokens e (assign return while endif else then end do if eq ne gt lt
+                        minus plus mul div null true false pb pe bb be colon semicolon eof))
+
+
+;parser
+
+
+(define our-parser
+    (parser
+        (start commands)
+        (end eof)
+        (error void)
+        (tokens t e)
+        (grammar
+            (commands 
+                ((unitcom) (a-unitcom $1))
+                ((commands semicolon unitcom) (unitcoms $1  $3))
+            )
+            (unitcom
+                ((whilecom) (while-com $1))
+                ((ifcom) (if-com $1))
+                ((assigncom) (assign-com $1))
+                ((returncom) (return-com $1))
+            )
+            (whilecom
+                ((while exp do commands end) (while-statement $2 $4))
+            )
+            (ifcom 
+                ((if exp then commands else commands endif) (if-statement $2 $4 $6))
+            )
+            (assigncom
+                ((id assign exp) (assignment $1 $3))
+            )
+            (returncom
+                ((return exp) (returnment $2))
+            )
+            (exp
+                ((aexp) (a-exp $1))
+                ((aexp gt aexp) (more-exp $1 $3))
+                ((aexp lt aexp) (less-exp $1 $3))
+                ((aexp eq aexp) (eq-exp $1 $3))
+                ((aexp ne aexp) (neq-exp $1 $3))
+            )
+            (aexp
+                ((bexp) (b-aexp $1))
+                ((bexp minus aexp) (diff-aexp $1 $3))
+                ((bexp plus aexp) (sum-aexp $1 $3))
+            )
+            (bexp
+                ((cexp) (c-bexp $1))
+                ((cexp mul bexp) (mul-bexp $1 $3))
+                ((cexp div bexp) (div-bexp $1 $3))
+            )
+            (cexp
+                ((minus cexp) (neg-cexp $2))
+                ((pb exp pe) (par-cexp $2))
+                ((pos-number) (num-cexp $1))
+                ((null) (null-cexp null))
+                ((id) (var-cexp $1))
+                ((true) (true-cexp #T))
+                ((false) (false-cexp #F))
+                ((string) (string-cexp $1))
+                ((vec) (list-cexp $1))
+                ((id vecref) (listmem-cexp  $1 $2))
+            )
+            (vec
+                ((bb be) (empty-newlist))
+                ((bb explist be) (list-newlist $2))
+            )
+            (explist
+                ((exp) (exp-listvalues $1))
+                ((exp colon explist) (append-listvalues $1 $3))
+            )
+            (vecref
+                ((bb exp be) (exp-listmem $2))
+                ((bb exp be vecref) (append-listmem $2 $4))
+            )
+        )
+    )
+)
+
+
+
+
+
 ;value-of
 
 (define value-of-command
@@ -262,7 +403,7 @@
 (define value-of-assign
   (lambda (assign1)
     (cases assign assign1
-      (assignment (var1 exp1) (extend-env var1 (value-of-exp exp1))))))
+      (assignment (var1 exp1) (set! environment (extend-env var1 (value-of-exp exp1) environment))))))
 
 
 (define value-of-return
@@ -278,34 +419,34 @@
       (more-exp (aexp1 aexp2) (let ( (val1 (value-of-aexp aexp1)) (val2 (value-of-aexp aexp2)) )
                                 (cases expval val1
                                   (num-val (num1) (cases expval val2
-                                                    (num-val (num2) (bool-val(> (expval->num num1) (expval->num num2))))
-                                                    (list-val (list1) (list-val (list-operator <= (expval->list list1) (expval->num num1))))
+                                                    (num-val (num2) (bool-val(>  num1  num2)))
+                                                    (list-val (list1) (list-val (list-operator <=  list1  num1)))
                                                     (else report-invalid-comparison)
                                                     ))
                                   (list-val (list1) (cases expval val2
-                                                      (num-val (num1) (list-val (list-operator > (expval->list list1) (expval->num num1))))
-                                                      (string-val (string1) (list-val (list-operator string>? (expval->list list1) (expval->string string1))))
+                                                      (num-val (num1) (list-val (list-operator >  list1  num1)))
+                                                      (string-val (string1) (list-val (list-operator string>?  list1 string1)))
                                                       (else report-invalid-comparison)))
                                   (string-val (string1) (cases expval val2
-                                                          (list-val (list1) (list-val (list-operator string<=? (expval->list list1) (expval->string string1))))
-                                                          (string-val (string2) (list-val (map string>? (expval->string string1) (expval->string string2))))
+                                                          (list-val (list1) (list-val (list-operator string<=?  list1  string1)))
+                                                          (string-val (string2) (bool-val (string>?  string1  string2)))
                                                           (else report-invalid-comparison)))
                                   (else report-invalid-comparison)
                                   )))
       (less-exp (aexp1 aexp2) (let ( (val1 (value-of-aexp aexp1)) (val2 (value-of-aexp aexp2)) )
                                 (cases expval val1
                                   (num-val (num1) (cases expval val2
-                                                    (num-val (num2) (bool-val(< (expval->num num1) (expval->num num2))))
-                                                    (list-val (list1) (list-val (list-operator >= (expval->list list1) (expval->num num1))))
+                                                    (num-val (num2) (bool-val(<  num1  num2)))
+                                                    (list-val (list1) (list-val (list-operator >=  list1  num1)))
                                                     (else report-invalid-comparison)
                                                     ))
                                   (list-val (list1) (cases expval val2
-                                                      (num-val (num1) (list-val (list-operator < (expval->list list1) (expval->num num1))))
-                                                      (string-val (string1) (list-val (list-operator string<? (expval->list list1) (expval->string string1))))
+                                                      (num-val (num1) (list-val (list-operator <  list1  num1)))
+                                                      (string-val (string1) (list-val (list-operator string<?  list1  string1)))
                                                       (else report-invalid-comparison)))
                                   (string-val (string1) (cases expval val2
-                                                          (list-val (list1) (list-val (list-operator string>=? (expval->list list1) (expval->string string1))))
-                                                          (string-val (string2) (bool-val (string<? (expval->string string1) (expval->string string2))))
+                                                          (list-val (list1) (list-val (list-operator string>=?  list1  string1)))
+                                                          (string-val (string2) (bool-val (string<?  string1  string2)))
                                                           (else report-invalid-comparison)))
                                   (else report-invalid-comparison)
 
@@ -313,55 +454,55 @@
       (eq-exp (aexp1 aexp2) (let ( (val1 (value-of-aexp aexp1)) (val2 (value-of-aexp aexp2)) )
                                 (cases expval val1
                                   (num-val (num1) (cases expval val2
-                                                    (num-val (num2) (bool-val(= (expval->num num1) (expval->num num2))))
-                                                    (list-val (list1) (list-val (list-operator = (expval->list list1) (expval->num num1))))
+                                                    (num-val (num2) (bool-val(=  num1  num2)))
+                                                    (list-val (list1) (list-val (list-operator =  list1  num1)))
                                                     (else report-invalid-comparison)
                                                     ))
                                   (list-val (list1) (cases expval val2
-                                                      (num-val (num1) (list-val (list-operator = (expval->list list1) (expval->num num1))))
-                                                      (string-val (string1) (list-val (list-operator string=? (expval->list list1) (expval->string string1))))
-                                                      (bool-val (bool1)(list-val (list-operator eqv? (expval->list list1) (expval->bool bool1))))
-                                                      (null-val (null1)(list-val (list-operator eqv? (expval->list list1) (expval->null null1))))
-                                                      (list-val (list2) (list-val (map eqv? (expval->list list1) (expval->list list2)))) 
+                                                      (num-val (num1) (list-val (list-operator =  list1  num1)))
+                                                      (string-val (string1) (list-val (list-operator string=?  list1  string1)))
+                                                      (bool-val (bool1)(list-val (list-operator eqv?  list1  bool1)))
+                                                      (null-val (null1)(list-val (list-operator eqv?  list1  null1)))
+                                                      (list-val (list2) (list-val (map eqv?  list1  list2))) 
                                                       ))
                                   (string-val (string1) (cases expval val2
-                                                          (list-val (list1) (list-val (list-operator string=? (expval->list list1) (expval->string string1))))
-                                                          (string-val (string2) (bool-val (string=? (expval->string string1) (expval->string string2))))
+                                                          (list-val (list1) (list-val (list-operator string=?  list1  string1)))
+                                                          (string-val (string2) (bool-val (string=?  string1  string2)))
                                                           (else report-invalid-comparison)))
                                   (bool-val (bool1) (cases expval val2
-                                                      (list-val (list1) (list-val (list-operator eqv? (expval->list list1) (expval->bool bool1))))
-                                                      (bool-val (bool2) (bool-val (eqv? (expval->bool bool1) (expval->bool bool2))))
+                                                      (list-val (list1) (list-val (list-operator eqv?  list1  bool1)))
+                                                      (bool-val (bool2) (bool-val (eqv?  bool1  bool2)))
                                                       (else report-invalid-comparison)))
                                   (null-val (null1) (cases expval val2
                                                       (null-val (null2) (bool-val #t))
-                                                      (list-val (list1) (list-val (list-operator eqv? (expval->list list1) (expval->null null1))))
+                                                      (list-val (list1) (list-val (list-operator eqv?  list1  null1)))
                                                       (else report-invalid-comparison)))
                                   )))
       (neq-exp (aexp1 aexp2)   (let ( (val1 (value-of-aexp aexp1)) (val2 (value-of-aexp aexp2)) )
                                 (cases expval val1
                                   (num-val (num1) (cases expval val2
-                                                    (num-val (num2) (bool-val(not (= (expval->num num1) (expval->num num2)))))
-                                                    (list-val (list1) (list-val (map not (list-operator = (expval->list list1) (expval->num num1)))))
+                                                    (num-val (num2) (bool-val(not (=  num1  num2))))
+                                                    (list-val (list1) (list-val (map not (list-operator =  list1  num1))))
                                                     (else report-invalid-comparison)
                                                     ))
                                   (list-val (list1) (cases expval val2
-                                                      (num-val (num1) (list-val (map not (list-operator = (expval->list list1) (expval->num num1)))))
-                                                      (string-val (string1) (list-val (map not (list-operator string=? (expval->list list1) (expval->string string1)))))
-                                                      (bool-val (bool1)(list-val (map not (list-operator eqv? (expval->list list1) (expval->bool bool1)))))
-                                                      (null-val (null1)(list-val (map not (list-operator eqv? (expval->list list1) (expval->null null1)))))
-                                                      (list-val (list2) (list-val (map not (map eqv? (expval->list list1) (expval->list list2)))))
+                                                      (num-val (num1) (list-val (map not (list-operator =  list1  num1))))
+                                                      (string-val (string1) (list-val (map not (list-operator string=?  list1  string1))))
+                                                      (bool-val (bool1)(list-val (map not (list-operator eqv?  list1  bool1))))
+                                                      (null-val (null1)(list-val (map not (list-operator eqv?  list1  null1))))
+                                                      (list-val (list2) (list-val (map not (map eqv?  list1  list2))))
                                                       ))
                                   (string-val (string1) (cases expval val2
-                                                          (list-val (list1) (list-val (map not (list-operator string=? (expval->list list1) (expval->string string1)))))
-                                                          (string-val (string2) (bool-val (not (string=? (expval->string string1) (expval->string string2)))))
+                                                          (list-val (list1) (list-val (map not (list-operator string=?  list1  string1))))
+                                                          (string-val (string2) (bool-val (not (string=?  string1 string2))))
                                                           (else report-invalid-comparison)))
                                   (bool-val (bool1) (cases expval val2
-                                                      (list-val (list1) (list-val (map not (list-operator eqv? (expval->list list1) (expval->bool bool1)))))
-                                                      (bool-val (bool2) (bool-val (not (eqv? (expval->bool bool1) (expval->bool bool2)))))
+                                                      (list-val (list1) (list-val (map not (list-operator eqv?  list1  bool1))))
+                                                      (bool-val (bool2) (bool-val (not (eqv?  bool1  bool2))))
                                                       (else report-invalid-comparison)))
                                   (null-val (null1) (cases expval val2
                                                       (null-val (null2) (bool-val #f))
-                                                      (list-val (list1) (list-val (map not (list-operator eqv? (expval->list list1) (expval->null null1)))))
+                                                      (list-val (list1) (list-val (map not (list-operator eqv?  list1  null1))))
                                                       (else report-invalid-comparison)))
                                   )))
       )))
@@ -373,33 +514,33 @@
       (diff-aexp (bexp1 aexp1) (let( (val1 (value-of-bexp bexp1)) (val2 (value-of-aexp aexp1)) )
                                  (cases expval val1
                                    (num-val (num1) (cases expval val2
-                                                     (num-val (num2) (num-val (- (expval->num num1) (expval->num num2))))
-                                                     (list-val (list1) (list-val (neg-list (list-operator - (expval->list list1) (expval->num num1)))))
+                                                     (num-val (num2) (num-val (-  num1  num2)))
+                                                     (list-val (list1) (list-val (neg-list (list-operator -  list1  num1))))
                                                      (else report-invalid-operands)))
                                    (list-val (list1) (cases expval val2
-                                                       (num-val (num1) (list-val (list-operator - (expval->list list1) (expval->num num1))))
+                                                       (num-val (num1) (list-val (list-operator -  list1  num1)))
                                                        (else report-invalid-operands)))
                                    (else report-invalid-operands)
                                    )))
       (sum-aexp (bexp1 aexp1) (let( (val1 (value-of-bexp bexp1)) (val2 (value-of-aexp aexp1))  )
                                 (cases expval val1
                                   (num-val (num1) (cases expval val2
-                                                    (num-val (num2) (num-val (+ (expval->num num1) (expval->num num2))))
-                                                    (list-val (list1) (list-val (list-operator + (expval->list list1) (expval->num num1))))
+                                                    (num-val (num2) (num-val (+  num1  num2)))
+                                                    (list-val (list1) (list-val (list-operator +  list1  num1)))
                                                     (else report-invalid-operands)))
                                   (list-val (list1) (cases expval val2
-                                                      (num-val (num1) (list-val (list-operator + (expval->list list1) (expval->num num1))))
-                                                      (list-val (list2) (list-val (append (expval->list list1) (expval->list list2))))
-                                                      (bool-val (bool1) (list-val (list-or (expval->list list1) (expval->bool bool1))))
-                                                      (string-val (string1) (list-val (list-operator string-append (expval->list list1) (expval->string string1))))
+                                                      (num-val (num1) (list-val (list-operator +  list1  num1)))
+                                                      (list-val (list2) (list-val (append  list1  list2)))
+                                                      (bool-val (bool1) (list-val (list-or  list1  bool1)))
+                                                      (string-val (string1) (list-val (list-operator string-append  list1  string1)))
                                                       (else report-invalid-operands)))
                                   (bool-val (bool1) (cases expval val2
-                                                      (bool-val (bool2) (bool-val (or (expval->bool bool1) (expval->bool bool2))))
-                                                      (list-val (list1) (list-val (list-or (expval->list list1) (expval->bool bool1))))
+                                                      (bool-val (bool2) (bool-val (or  bool1  bool2)))
+                                                      (list-val (list1) (list-val (list-or  list1  bool1)))
                                                       (else report-invalid-operands)))
                                   (string-val (string1) (cases expval val2
-                                                          (string-val (string2) (string-val (string-append (expval->string string1) (expval->string string2))))
-                                                          (list-val (list1) (list-val (list-operator string-append (expval->list list1) (expval->string string1))))
+                                                          (string-val (string2) (string-val (string-append  string1  string2)))
+                                                          (list-val (list1) (list-val (list-operator string-append  list1  string1)))
                                                           (else report-invalid-operands)))
                                   (else report-invalid-operands)
                                   )))
@@ -412,16 +553,16 @@
       (mul-bexp (cexp1 bexp1) (let( (val1 (value-of-cexp cexp1)) (val2 (value-of-bexp bexp1))  )
                                 (cases expval val1
                                   (num-val (num1) (cases expval val2
-                                                    (num-val (num2) (num-val (* (expval->num num1) (expval->num num2))))
-                                                    (list-val (list1) (list-val (list-operator * (expval->list list1) (expval->num num1))))
+                                                    (num-val (num2) (num-val (*  num1  num2)))
+                                                    (list-val (list1) (list-val (list-operator *  list1  num1)))
                                                     (else report-invalid-operands)))
                                   (list-val (list1) (cases expval val2
-                                                      (num-val (num1) (list-val (list-operator * (expval->list list1) (expval->num num1))))
-                                                      (bool-val (bool1) (list-val (list-and (expval->list list1) (expval->bool bool1))))
+                                                      (num-val (num1) (list-val (list-operator *  list1  num1)))
+                                                      (bool-val (bool1) (list-val (list-and  list1  bool1)))
                                                       (else report-invalid-operands)))
                                   (bool-val (bool1) (cases expval val2
-                                                      (bool-val (bool2) (bool-val (and (expval->bool bool1) (expval->bool bool2))))
-                                                      (list-val (list1) (list-val (list-and (expval->list list1) (expval->bool bool1))))
+                                                      (bool-val (bool2) (bool-val (and  bool1  bool2)))
+                                                      (list-val (list1) (list-val (list-and  list1  bool1)))
                                                       (else report-invalid-operands)))
                                   (else report-invalid-operands)
                                   )))
@@ -429,11 +570,11 @@
       (div-bexp (cexp1 bexp1) (let( (val1 (value-of-cexp cexp1)) (val2 (value-of-bexp bexp1)) )
                                  (cases expval val1
                                    (num-val (num1) (cases expval val2
-                                                     (num-val (num2) (num-val (/ (expval->num num1) (expval->num num2))))
-                                                     (list-val (list1) (list-val (inverse-list (list-operator / (expval->list list1) (expval->num num1)))))
+                                                     (num-val (num2) (num-val (/  num1  num2)))
+                                                     (list-val (list1) (list-val (inverse-list (list-operator /  list1  num1))))
                                                      (else report-invalid-operands)))
                                    (list-val (list1) (cases expval val2
-                                                       (num-val (num1) (list-val (list-operator / (expval->list list1) (expval->num num1))))
+                                                       (num-val (num1) (list-val (list-operator /  list1  num1)))
                                                        (else report-invalid-operands)))
                                    (else report-invalid-operands)
                                    )))
@@ -443,11 +584,11 @@
 (define value-of-cexp
   (lambda (cexp1)
     (cases cexp cexp1
-      (neg-cexp (nexp1) (let ( (val1 value-of-cexp) )
+      (neg-cexp (nexp1) (let ( (val1 (value-of-cexp nexp1) ))
                           (cases expval val1
-                            (num-val (num1) (num-val (* -1 (expval->num val1))))
-                            (bool-val (bool1) (bool-val (not (expval->bool bool1))))
-                            (list-val (list1) (list-val (list-operator * (expval->list list1) -1)))
+                            (num-val (num1) (num-val (* -1  num1)))
+                            (bool-val (bool1) (bool-val (not  bool1)))
+                            (list-val (list1) (list-val (list-operator *  list1 -1)))
                             (else report-invalid-operands)
                             )))
       (par-cexp (exp1) (value-of-exp exp1))
@@ -465,14 +606,26 @@
   (lambda (newlist1)
     (cases newlist newlist1
       (empty-newlist () (list-val '()))
-      (list-newlist (listvalues1) (value-of-listvalues))
+      (list-newlist (listvalues1) (value-of-listvalues listvalues1))
       )))
 
 (define value-of-listvalues
   (lambda (listvalues1)
     (cases listvalues listvalues1
-      (exp-listvalues (exp1) (list-val(list (value-of-exp exp1))))
-      (append-listvalues (exp1 listvalues2) (list-val (cons (value-of-exp exp1) (expval->list (value-of-listvalues listvalues2))))) ;fix value-of-exp exp1
+      (exp-listvalues (exp1) (cases expval (value-of-exp exp1)
+                               (num-val (num1) (list-val (list num1)))
+                               (list-val (list1) (list-val (list list1)))
+                               (string-val (string1) (list-val (list string1)))
+                               (bool-val (bool1) (list-val (list bool1)))
+                               (null-val (null1) (list-val (list null1)))
+                               ))
+      (append-listvalues (exp1 listvalues2) (cases expval (value-of-exp exp1)
+                                              (num-val (num1) (list-val (cons num1 (expval->list (value-of-listvalues listvalues2)))))
+                                              (list-val (list1) (list-val (cons list1 (expval->list (value-of-listvalues listvalues2)))))
+                                              (string-val (string1) (list-val (cons string1 (expval->list (value-of-listvalues listvalues2)))))
+                                              (bool-val (bool1) (list-val (cons bool1 (expval->list (value-of-listvalues listvalues2)))))
+                                              (null-val (null1) (list-val (cons null1 (expval->list (value-of-listvalues listvalues2)))))
+                                              )) ;fix value-of-exp exp1. I think I fixed it!
       )))
 
 
@@ -487,5 +640,9 @@
       
 
 ;test
+(define (evaluate file) (value-of-command (our-parser (lex-this (open-input-file file)))))
+
+
+(evaluate "test.txt")
 
 
