@@ -60,12 +60,38 @@
   (lambda ()
     (eopl:error "invalid operands")))
 
+
+(define-datatype proc proc?
+  (procedure
+   (vars1 expval?)
+   (body command?)
+   (saved-env env?)))
+
+(define apply-procedure
+  (lambda (proc1 vals)
+    (cases proc proc1
+      (procedure (vars1 body saved-env)
+                 (begin
+                   (set! env-list (append env-list (list environment)))
+                   ;(append env-list saved-env)
+                   (set! environment (extend-env-list (expval->list vars1) vals saved-env))
+                   (value-of-command body ))))))
+
+(define extend-env-list
+  (lambda (vars1 vals1 saved-env)
+    (if (empty? vars1) saved-env ( extend-env-list (cdr vars1) (cdr vals1) (extend-env (car vars1) (car vals1) saved-env))))) 
+
 ;define environment
 (define-datatype env env?
   (empty-env)
   (extend-env
    (var1 symbol?)
    (val1 expval?)
+   (env1 env?))
+  (extend-env-rec
+   (p-name symbol?)
+   (p-vars expval?)
+   (p-body command?)
    (env1 env?)))
 
 (define apply-env
@@ -73,9 +99,13 @@
     (cases env environment
       (empty-env () (report-no-binding-found search-var))
       (extend-env (var val saved-env) 
-                                       (if (eqv? search-var var) val (apply-env saved-env search-var)))))) ;we may add report-bad-env
-      
+                                       (if (eqv? search-var var) val (apply-env saved-env search-var)))
+      (extend-env-rec (p-name p-vars p-body saved-env)
+                      (if (eqv? search-var p-name) (proc-val (procedure p-vars p-body (extend-env-rec p-name p-vars p-body saved-env))) (apply-env saved-env search-var))))))
+      ;we may add report-bad-env
+
 (define environment (empty-env))
+(define env-list '())
 
 ;define grammer of the language and constructors
 (define-datatype command command?
@@ -110,7 +140,13 @@
 (define-datatype assign assign?
   (assignment
    (var1 symbol?)
-   (exp1 exp?)))
+   (exp1 exp?))
+  (func-assign
+   (var1 symbol?)
+   (func1 function?))
+  (call-assign
+   (var1 symbol?)
+   (call1 call?)))
 
 (define-datatype return return?
   (returnment
@@ -195,6 +231,30 @@
    (exp1 exp?)
    (listmem1 listmem?)))
 
+(define-datatype function function?
+  (funccom
+   (vars1 vars?)
+   (command1 command?)))
+
+(define-datatype vars vars?
+  (a-vars
+   (var1 symbol?))
+  (append-vars
+   (var1 symbol?)
+   (vars1 vars?)))
+
+(define-datatype call call?
+  (args-call
+   (var1 symbol?)
+   (args1 args?)))
+
+(define-datatype args args?
+  (exp-args
+   (exp1 exp?))
+  (append-args
+   (exp1 exp?)
+   (args1 args?)))
+
 
 ;define expression value sets
 (define-datatype expval expval?
@@ -207,8 +267,16 @@
   (list-val
    (list1 list?))
   (string-val
-   (string1 string?)))
+   (string1 string?))
+  (proc-val
+   (proc1 proc?)))
 
+
+(define expval->proc
+  (lambda (val)
+    (cases expval val
+      (proc-val (proc1) proc1)
+      (else (report-expval-extractor-error 'proc val)))))
 (define expval->num
   (lambda (val)
     (cases expval val
@@ -249,6 +317,7 @@
 (define our-lexer
     (lexer
         ("=" (token-assign))
+        ("func" (token-func))
         ("return" (token-return))
         ("endif" (token-endif))
         ("else" (token-else))
@@ -272,6 +341,8 @@
         (#\) (token-pe))
         (#\[ (token-bb))
         (#\] (token-be))
+        (#\{ (token-brcb))
+        (#\} (token-brce))
         (#\, (token-colon))
         (#\; (token-semicolon))
         ((:: #\" (complement(::  any-string #\" any-string )) #\") (token-string (substring lexeme 1 (- (string-length lexeme) 1))))
@@ -287,8 +358,8 @@
 
 
 (define-tokens t (pos-number id string))
-(define-empty-tokens e (assign return while endif else then end do if eq ne gt lt
-                        minus plus mul div null true false pb pe bb be colon semicolon eof))
+(define-empty-tokens e (assign func return while endif else then end do if eq ne gt lt
+                        minus plus mul div null true false pb pe bb be brcb brce colon semicolon eof))
 
 
 ;parser
@@ -319,6 +390,8 @@
             )
             (assigncom
                 ((id assign exp) (assignment $1 $3))
+                ( (id assign function) (func-assign $1 $3))
+                ( (id assign call) (call-assign $1 $3))
             )
             (returncom
                 ((return exp) (returnment $2))
@@ -364,7 +437,21 @@
                 ((bb exp be) (exp-listmem $2))
                 ((bb exp be vecref) (append-listmem $2 $4))
             )
-        )
+            (function
+                ( (func pb vars pe  brcb commands brce) (funccom $3 $6))
+                )
+            (vars
+                ( (id) (a-vars $1))
+                ( (id colon vars) (append-vars $1 $3))
+                )
+            (call
+                ( (id pb args pe) (args-call $1 $3 ))
+                )
+            (args
+                ( (exp) (exp-args $1))
+                ( (exp colon args) (append-args $1 $3))
+                )
+            )
     )
 )
 
@@ -378,8 +465,15 @@
   (lambda (command1)
     (cases command command1
       (a-unitcom (unitcom1) (value-of-unitcom unitcom1))
-      (unitcoms (command2 unitcom1) (begin (value-of-command command2 ) (value-of-unitcom unitcom1 )))
-      )))
+      (unitcoms (command2 unitcom1)
+                (cases command command2
+                  (a-unitcom (unitcom2) (cases unitcom unitcom2
+                                          (return-com (return1) (value-of-command command2))
+                                          (else (begin (value-of-command command2 ) (value-of-unitcom unitcom1 )))))
+                  (unitcoms (command3 unitcom2) (cases unitcom unitcom2
+                                                  (return-com (return1) (value-of-command command2))
+                                                  (else (begin (value-of-command command2 ) (value-of-unitcom unitcom1 )))))
+      )))))
 
 (define value-of-unitcom
   (lambda (unitcom1)
@@ -403,13 +497,24 @@
 (define value-of-assign
   (lambda (assign1)
     (cases assign assign1
-      (assignment (var1 exp1) (set! environment (extend-env var1 (value-of-exp exp1) environment))))))
+      (assignment (var1 exp1) (set! environment (extend-env var1 (value-of-exp exp1) environment)))
+      (func-assign (var1 func1) (cases function func1
+                                  (funccom (vars1 command1) (set! environment (extend-env-rec var1 (value-of-vars vars1) command1 environment)))))
+                   ;(set! environment (extend-env-rec var1 (value-of-func func1) environment))) ;I think I fixed it
+      (call-assign (var1 call1) (let ( (returned-val (value-of-call call1)))
+                                  (begin
+                                    (set! environment (last env-list))
+                                    (set! env-list (remove (last env-list) env-list))
+                                    (set! environment (extend-env var1 returned-val environment))))))))
+                   ;(set! environment (extend-env var1 (value-of-call call1) environment))))))
 
 
 (define value-of-return
   (lambda (return1)
     (cases return return1
-      (returnment (exp1) (begin (print (value-of-exp exp1)) (exit))))))
+      (returnment (exp1)
+                  (if (= 0 (length env-list)) (print (value-of-exp exp1)) (value-of-exp exp1))))))  
+                           ;(print (value-of-exp exp1)) (exit))))))
 
 
 (define value-of-exp
@@ -463,7 +568,8 @@
                                                       (string-val (string1) (list-val (list-operator string=?  list1  string1)))
                                                       (bool-val (bool1)(list-val (list-operator eqv?  list1  bool1)))
                                                       (null-val (null1)(list-val (list-operator eqv?  list1  null1)))
-                                                      (list-val (list2) (list-val (map eqv?  list1  list2))) 
+                                                      (list-val (list2) (list-val (map eqv?  list1  list2)))
+                                                      (else report-invalid-comparison)
                                                       ))
                                   (string-val (string1) (cases expval val2
                                                           (list-val (list1) (list-val (list-operator string=?  list1  string1)))
@@ -477,6 +583,7 @@
                                                       (null-val (null2) (bool-val #t))
                                                       (list-val (list1) (list-val (list-operator eqv?  list1  null1)))
                                                       (else report-invalid-comparison)))
+                                  (else report-invalid-comparison)
                                   )))
       (neq-exp (aexp1 aexp2)   (let ( (val1 (value-of-aexp aexp1)) (val2 (value-of-aexp aexp2)) )
                                 (cases expval val1
@@ -491,6 +598,7 @@
                                                       (bool-val (bool1)(list-val (map not (list-operator eqv?  list1  bool1))))
                                                       (null-val (null1)(list-val (map not (list-operator eqv?  list1  null1))))
                                                       (list-val (list2) (list-val (map not (map eqv?  list1  list2))))
+                                                      (else report-invalid-comparison)
                                                       ))
                                   (string-val (string1) (cases expval val2
                                                           (list-val (list1) (list-val (map not (list-operator string=?  list1  string1))))
@@ -504,6 +612,7 @@
                                                       (null-val (null2) (bool-val #f))
                                                       (list-val (list1) (list-val (map not (list-operator eqv?  list1  null1))))
                                                       (else report-invalid-comparison)))
+                                  (else report-invalid-comparison)
                                   )))
       )))
 
@@ -618,6 +727,7 @@
                                (string-val (string1) (list-val (list string1)))
                                (bool-val (bool1) (list-val (list bool1)))
                                (null-val (null1) (list-val (list null1)))
+                               (else report-invalid-operands)
                                ))
       (append-listvalues (exp1 listvalues2) (cases expval (value-of-exp exp1)
                                               (num-val (num1) (list-val (cons num1 (expval->list (value-of-listvalues listvalues2)))))
@@ -625,6 +735,7 @@
                                               (string-val (string1) (list-val (cons string1 (expval->list (value-of-listvalues listvalues2)))))
                                               (bool-val (bool1) (list-val (cons bool1 (expval->list (value-of-listvalues listvalues2)))))
                                               (null-val (null1) (list-val (cons null1 (expval->list (value-of-listvalues listvalues2)))))
+                                              (else report-invalid-operands)
                                               )) ;fix value-of-exp exp1. I think I fixed it!
       )))
 
@@ -635,6 +746,27 @@
       (exp-listmem (exp1) (list-val (list (expval->num (value-of-exp exp1)))))
       (append-listmem (exp1 listmem1) (list-val (cons (expval->num (value-of-exp exp1)) (expval->list (value-of-listmem listmem1)))))
       )))
+
+(define value-of-vars
+  (lambda (vars1)
+    (cases vars vars1
+      (a-vars (var1) (list-val (list var1)))
+      (append-vars (var1 vars2) (list-val (append (list var1) (expval->list (value-of-vars vars2)))))
+      )))
+
+(define value-of-call
+  (lambda (call1)
+    (cases call call1
+      (args-call (var1 args1) (let ( (func1 (apply-env environment var1)))
+                                (apply-procedure (expval->proc func1) (expval->list (value-of-args args1))))))))
+
+(define value-of-args
+  (lambda (args1)
+    (cases args args1
+      (exp-args (exp1) ( list-val(list (value-of-exp exp1))))
+      (append-args (exp1 args2) (list-val (append (list (value-of-exp exp1)) (expval->list (value-of-args args2)))))
+      )))
+    
 
 
       
